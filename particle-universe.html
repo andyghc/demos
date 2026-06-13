@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Particle Universe</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #08080f; font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  canvas {
+    display: block; width: 100%; height: 100%;
+    background: radial-gradient(ellipse at center, #0c0c1e 0%, #060610 60%, #020208 100%);
+  }
+  #ui {
+    position: fixed; bottom: 28px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px;
+    pointer-events: none; z-index: 10;
+    padding: 0 12px;
+  }
+  #ui button {
+    pointer-events: auto;
+    flex: 0 1 auto; min-width: 0;
+    padding: 10px 16px; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px; background: rgba(10,10,25,0.65);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    color: rgba(255,255,255,0.5); font-size: 12px; font-weight: 500;
+    letter-spacing: 0.3px; cursor: pointer;
+    transition: all 0.35s cubic-bezier(0.22,1,0.36,1);
+    white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #ui button:hover { color: rgba(255,255,255,0.7); }
+  #ui button.active {
+    color: #fff;
+    border-color: rgba(255,255,255,0.25);
+    background: rgba(30,30,70,0.7);
+    box-shadow: 0 0 20px rgba(120,100,255,0.15), 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #mode-label {
+    position: fixed; top: 48px; left: 0; right: 0;
+    text-align: center; pointer-events: none; z-index: 10;
+    font-size: 13px; font-weight: 400; letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.2); text-transform: uppercase;
+    transition: opacity 0.6s ease;
+  }
+  #hint {
+    position: fixed; bottom: 90px; left: 0; right: 0;
+    text-align: center; pointer-events: none; z-index: 10;
+    font-size: 13px; color: rgba(255,255,255,0.15);
+    transition: opacity 1s ease;
+  }
+  #hint.fade { opacity: 0; }
+  @media (max-width: 480px) {
+    #ui button { padding: 8px 12px; font-size: 10px; }
+    #ui { gap: 6px; padding: 0 8px; bottom: 20px; }
+    #mode-label { top: 32px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="mode-label">⋆ particle universe ⋆</div>
+<div id="hint">tap to create</div>
+<div id="ui">
+  <button data-mode="gravity">Gravity</button>
+  <button data-mode="fireworks" class="active">Fireworks</button>
+  <button data-mode="vortex">Vortex</button>
+  <button data-mode="paintbrush">Paint</button>
+</div>
+<script>
+/* ─── Canvas Setup ─── */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+/* ─── Constants ─── */
+const PI = Math.PI, TAU = PI * 2;
+const rand = (min, max) => Math.random() * (max - min) + min;
+const randInt = (min, max) => Math.floor(rand(min, max + 1));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+/* ─── Particle ─── */
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = 0; this.y = 0;
+    this.vx = 0; this.vy = 0;
+    this.ax = 0; this.ay = 0;
+    this.size = 2; this.life = 0; this.maxLife = 1;
+    this.hue = 0; this.sat = 80; this.light = 60;
+    this.trail = []; this.maxTrail = 6;
+    this.alive = false; this.age = 0;
+    this.glow = true;
+  }
+  spawn(x, y, opts = {}) {
+    this.x = x; this.y = y;
+    this.vx = opts.vx || 0; this.vy = opts.vy || 0;
+    this.life = opts.life ?? 1; this.maxLife = this.life;
+    this.size = opts.size || rand(1.5, 4);
+    this.hue = opts.hue ?? rand(0, 360);
+    this.sat = opts.sat ?? rand(70, 100);
+    this.light = opts.light ?? rand(50, 75);
+    this.maxTrail = opts.trail ?? randInt(4, 10);
+    this.glow = opts.glow !== false;
+    this.trail = [{ x, y }];
+    this.alive = true; this.age = 0;
+  }
+  update(forces, dt) {
+    if (!this.alive) return;
+    this.age += dt;
+
+    this.ax = 0; this.ay = 0;
+
+    // External forces
+    for (const f of forces) f(this, dt);
+
+    this.vx += this.ax * dt;
+    this.vy += this.ay * dt;
+
+    // Damping
+    this.vx *= 0.985;
+    this.vy *= 0.985;
+
+    this.x += this.vx * dt * 60;
+    this.y += this.vy * dt * 60;
+
+    // Trail
+    if (this.trail.length === 0 || dist(this, this.trail[this.trail.length - 1]) > 1.5) {
+      this.trail.push({ x: this.x, y: this.y });
+      if (this.trail.length > this.maxTrail) this.trail.shift();
+    }
+
+    this.life -= dt / this.maxLife;
+    if (this.life <= 0) { this.alive = false; return; }
+
+    // Fade out near edges
+    const margin = 100;
+    if (this.x < -margin || this.x > W + margin || this.y < -margin || this.y > H + margin) {
+      this.life = Math.max(0, this.life - dt * 3);
+    }
+  }
+  draw(ctx, alpha) {
+    if (!this.alive) return;
+    const a = clamp(this.life * (alpha ?? 1), 0, 1);
+    const sz = this.size * (0.6 + 0.4 * a);
+
+    ctx.save();
+    ctx.globalAlpha = a;
+
+    // Trail
+    if (this.trail.length > 2) {
+      ctx.beginPath();
+      ctx.moveTo(this.trail[0].x, this.trail[0].y);
+      for (let i = 1; i < this.trail.length; i++) {
+        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+      }
+      ctx.strokeStyle = `hsla(${this.hue}, ${this.sat}%, ${this.light}%, ${a * 0.35})`;
+      ctx.lineWidth = sz * 0.5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // Glow
+    if (this.glow) {
+      ctx.shadowColor = `hsla(${this.hue}, 100%, ${this.light}%, ${a * 0.6})`;
+      ctx.shadowBlur = sz * 8;
+    }
+    ctx.fillStyle = `hsla(${this.hue}, ${this.sat}%, ${this.light}%, ${a})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, sz, 0, TAU);
+    ctx.fill();
+
+    // Bright core
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = `hsla(${this.hue}, ${this.sat}%, ${Math.min(this.light + 20, 95)}%, ${a * 0.75})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, sz * 0.4, 0, TAU);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+/* ─── Universe ─── */
+const MAX_PARTICLES = 600;
+let particles = Array.from({ length: MAX_PARTICLES }, () => new Particle());
+let particleCount = 0;
+
+function getParticle() {
+  for (let i = 0; i < particles.length; i++) {
+    if (!particles[i].alive) { particleCount++; return particles[i]; }
+  }
+  return null;
+}
+
+/* ─── Interactive Objects ─── */
+let wells = [];
+let vortices = [];
+let pointerActive = false;
+let pointerX = 0, pointerY = 0;
+let lastPointerX = 0, lastPointerY = 0;
+let pointerSpeed = 0;
+
+/* ─── Ambient ─── */
+const ambientCount = 40;
+const ambient = Array.from({ length: ambientCount }, () => {
+  const p = new Particle();
+  p.spawn(rand(0, W), rand(0, H), {
+    vx: rand(-0.15, 0.15), vy: rand(-0.15, 0.15),
+    life: rand(3, 6), size: rand(0.5, 1.2),
+    hue: rand(200, 280), sat: 40, light: 50,
+    trail: 3, glow: false
+  });
+  return p;
+});
+let ambientTimer = 0;
+
+/* ─── Modes ─── */
+const MODE = { GRAVITY: 'gravity', FIREWORKS: 'fireworks', VORTEX: 'vortex', PAINTBRUSH: 'paintbrush' };
+let mode = MODE.FIREWORKS;
+const modeNames = { gravity: 'Gravity Wells', fireworks: 'Fireworks', vortex: 'Vortex', paintbrush: 'Paintbrush' };
+
+/* ─── Force Functions ─── */
+const forces = [];
+
+function registerForce(fn) { forces.push(fn); }
+
+// Gravity from wells
+registerForce((p, dt) => {
+  if (mode !== MODE.GRAVITY) return;
+  for (const w of wells) {
+    const dx = w.x - p.x, dy = w.y - p.y;
+    const d = Math.hypot(dx, dy) + 1;
+    const strength = w.strength * 200 / (d * d + 20);
+    p.ax += (dx / d) * strength;
+    p.ay += (dy / d) * strength;
+    // Color shift toward well
+    if (d < 150) {
+      p.hue = lerp(p.hue, w.hue, dt * 0.015);
+      p.light = lerp(p.light, 70, dt * 0.01);
+    }
+  }
+});
+
+// Vortex force
+registerForce((p, dt) => {
+  if (mode !== MODE.VORTEX) return;
+  for (const v of vortices) {
+    const dx = p.x - v.x, dy = p.y - v.y;
+    const d = Math.hypot(dx, dy) + 1;
+    if (d > 400) continue;
+    const strength = v.strength * 80 / (d + 10);
+    // Tangential force (rotate around center)
+    const angle = Math.atan2(dy, dx) + PI / 2;
+    p.ax += Math.cos(angle) * strength;
+    p.ay += Math.sin(angle) * strength;
+    // Inward pull at edges, outward at center
+    const radial = d < 60 ? 0.15 : -0.25;
+    p.ax += (dx / d) * radial * 2;
+    p.ay += (dy / d) * radial * 2;
+    // Color shift
+    p.hue = lerp(p.hue, (Math.atan2(dy, dx) / TAU + 0.5) * 360, dt * 0.03);
+  }
+});
+
+// Fireworks gravity (gentle downward)
+registerForce((p, dt) => {
+  if (mode !== MODE.FIREWORKS) return;
+  p.ay += 0.08;
+});
+
+// Paintbrush slight drag
+registerForce((p, dt) => {
+  if (mode !== MODE.PAINTBRUSH) return;
+  p.vx *= 0.96;
+  p.vy *= 0.96;
+});
+
+/* ─── Mode Actions ─── */
+function onTap(x, y) {
+  switch (mode) {
+    case MODE.GRAVITY:
+      spawnGravityWell(x, y);
+      break;
+    case MODE.FIREWORKS:
+      spawnFireworks(x, y);
+      break;
+    case MODE.VORTEX:
+      spawnVortex(x, y);
+      break;
+    case MODE.PAINTBRUSH:
+      spawnPaintBurst(x, y);
+      break;
+  }
+}
+
+function onDrag(x, y) {
+  if (mode === MODE.PAINTBRUSH) {
+    spawnPaintParticles(x, y);
+  }
+}
+
+function spawnGravityWell(x, y) {
+  const hue = rand(200, 300);
+  wells.push({ x, y, strength: rand(0.6, 1.4), hue, life: 8, age: 0 });
+  if (wells.length > 12) wells.shift();
+
+  // Spawn orbiting particles
+  const count = 20 + randInt(0, 15);
+  for (let i = 0; i < count; i++) {
+    const p = getParticle();
+    if (!p) break;
+    const angle = rand(0, TAU);
+    const speed = rand(0.8, 2.5);
+    const rad = rand(20, 120);
+    p.spawn(x + Math.cos(angle) * rad, y + Math.sin(angle) * rad, {
+      vx: -Math.sin(angle) * speed, vy: Math.cos(angle) * speed,
+      life: rand(4, 10), size: rand(1.5, 3.5),
+      hue: hue + rand(-30, 30), sat: 80, light: 60,
+      trail: randInt(6, 14)
+    });
+  }
+}
+
+function spawnFireworks(x, y) {
+  const count = 100 + randInt(0, 40);
+  const baseHue = rand(0, 360);
+  for (let i = 0; i < count; i++) {
+    const p = getParticle();
+    if (!p) break;
+    const angle = rand(0, TAU);
+    const speed = rand(1.5, 6);
+    p.spawn(x + rand(-3, 3), y + rand(-3, 3), {
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: rand(0.8, 2.5), size: rand(1.5, 4),
+      hue: baseHue + rand(-40, 40) + (speed > 4 ? 180 : 0),
+      sat: rand(80, 100), light: rand(55, 80),
+      trail: randInt(5, 12)
+    });
+  }
+  // Secondary burst (sparkles)
+  setTimeout(() => {
+    const cx = x + rand(-20, 20), cy = y + rand(-20, 20);
+    for (let i = 0; i < 30; i++) {
+      const p = getParticle();
+      if (!p) break;
+      const angle = rand(0, TAU);
+      const speed = rand(0.3, 1.2);
+      p.spawn(cx, cy, {
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        life: rand(0.5, 1.5), size: rand(0.8, 1.8),
+        hue: rand(30, 50), sat: 100, light: rand(70, 95),
+        trail: 3
+      });
+    }
+  }, 150 + rand(0, 100));
+}
+
+function spawnVortex(x, y) {
+  const hue = rand(160, 320);
+  vortices.push({ x, y, strength: rand(0.8, 1.6), hue, life: 6, age: 0 });
+  if (vortices.length > 6) vortices.shift();
+
+  const count = 40 + randInt(0, 20);
+  for (let i = 0; i < count; i++) {
+    const p = getParticle();
+    if (!p) break;
+    const angle = rand(0, TAU);
+    const rad = rand(10, 180);
+    const speed = rand(0.3, 1.5);
+    p.spawn(x + Math.cos(angle) * rad, y + Math.sin(angle) * rad, {
+      vx: Math.cos(angle + PI / 2) * speed - (rad / 180) * 0.5,
+      vy: Math.sin(angle + PI / 2) * speed - (rad / 180) * 0.5,
+      life: rand(3, 8), size: rand(1, 3),
+      hue: hue + rand(-40, 40) + (angle / TAU) * 60,
+      sat: 85, light: 60,
+      trail: randInt(6, 14)
+    });
+  }
+}
+
+function spawnPaintBurst(x, y) {
+  const count = 12 + randInt(0, 8);
+  const hue = rand(0, 360);
+  for (let i = 0; i < count; i++) {
+    const p = getParticle();
+    if (!p) break;
+    const angle = rand(0, TAU);
+    const speed = rand(0.5, 2);
+    p.spawn(x, y, {
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: rand(0.8, 2), size: rand(1.5, 3.5),
+      hue: hue + rand(-20, 20), sat: rand(70, 100), light: rand(55, 75),
+      trail: randInt(4, 10)
+    });
+  }
+}
+
+let paintHue = rand(0, 360);
+let paintTimer = 0;
+function spawnPaintParticles(x, y) {
+  const speed = Math.hypot(x - lastPointerX, y - lastPointerY);
+  const count = Math.min(Math.floor(speed * 0.8) + 3, 15);
+  paintHue = (paintHue + speed * 0.5 + 0.3) % 360;
+  for (let i = 0; i < count; i++) {
+    const p = getParticle();
+    if (!p) break;
+    p.spawn(
+      x + rand(-4, 4), y + rand(-4, 4), {
+        vx: rand(-0.5, 0.5) - (x - lastPointerX) * 0.15,
+        vy: rand(-0.5, 0.5) - (y - lastPointerY) * 0.15,
+        life: rand(0.8, 2), size: rand(1.5, 4),
+        hue: paintHue + rand(-25, 25),
+        sat: rand(70, 100), light: rand(55, 80),
+        trail: randInt(3, 8)
+      }
+    );
+  }
+}
+
+/* ─── Background Stars ─── */
+const stars = Array.from({ length: 120 }, () => ({
+  x: rand(0, 1), y: rand(0, 1),
+  size: rand(0.3, 1.2), alpha: rand(0.15, 0.6),
+  twinkle: rand(0, TAU), speed: rand(0.5, 2)
+}));
+function drawStars(t) {
+  for (const s of stars) {
+    const a = s.alpha * (0.6 + 0.4 * Math.sin(t * s.speed + s.twinkle));
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.beginPath();
+    ctx.arc(s.x * W, s.y * H, s.size, 0, TAU);
+    ctx.fill();
+  }
+}
+
+/* ─── Update Interactive Object Lifetimes ─── */
+function updateObjects(dt) {
+  for (let i = wells.length - 1; i >= 0; i--) {
+    wells[i].age += dt;
+    if (wells[i].age > wells[i].life) wells.splice(i, 1);
+  }
+  for (let i = vortices.length - 1; i >= 0; i--) {
+    vortices[i].age += dt;
+    if (vortices[i].age > vortices[i].life) vortices.splice(i, 1);
+  }
+}
+
+/* ─── Draw Interactive Objects ─── */
+function drawObjects() {
+  // Gravity wells
+  if (mode === MODE.GRAVITY) {
+    for (const w of wells) {
+      const alpha = 1 - (w.age / w.life);
+      const r = 30 + 60 * (w.age / w.life);
+      const grad = ctx.createRadialGradient(w.x, w.y, 0, w.x, w.y, r);
+      grad.addColorStop(0, `hsla(${w.hue}, 100%, 70%, ${alpha * 0.15})`);
+      grad.addColorStop(0.5, `hsla(${w.hue - 20}, 100%, 50%, ${alpha * 0.06})`);
+      grad.addColorStop(1, `hsla(${w.hue - 40}, 100%, 30%, 0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, r, 0, TAU);
+      ctx.fill();
+
+      // Ring
+      ctx.strokeStyle = `hsla(${w.hue}, 100%, 70%, ${alpha * 0.2})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, r * 0.5, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
+  // Vortices
+  if (mode === MODE.VORTEX) {
+    for (const v of vortices) {
+      const alpha = 1 - (v.age / v.life);
+      const r = 20 + 80 * (v.age / v.life);
+      const grad = ctx.createRadialGradient(v.x, v.y, 0, v.x, v.y, r);
+      grad.addColorStop(0, `hsla(${v.hue}, 100%, 70%, ${alpha * 0.12})`);
+      grad.addColorStop(0.5, `hsla(${v.hue + 40}, 100%, 50%, ${alpha * 0.05})`);
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(v.x, v.y, r, 0, TAU);
+      ctx.fill();
+    }
+  }
+}
+
+/* ─── Main Loop ─── */
+let lastTime = 0;
+let hintTimer = 0;
+const HINT_DELAY = 4;
+
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
+  lastTime = time;
+
+  // Clear with subtle trail (motion blur effect)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(8,8,15,0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Ambient particles
+  ambientTimer += dt;
+  if (ambientTimer > 0.3) {
+    ambientTimer = 0;
+    for (const a of ambient) {
+      if (!a.alive) {
+        a.spawn(rand(0, W), rand(0, H), {
+          vx: rand(-0.15, 0.15), vy: rand(-0.15, 0.15),
+          life: rand(3, 8), size: rand(0.5, 1.2),
+          hue: rand(200, 280), sat: 40, light: 50,
+          trail: 3, glow: false
+        });
+      }
+    }
+  }
+
+  // Update ambient
+  for (const a of ambient) a.update([], dt);
+
+  // Update interactive objects
+  updateObjects(dt);
+
+  // Update particles
+  particleCount = 0;
+  for (const p of particles) {
+    if (p.alive) p.update(forces, dt);
+  }
+
+  // Draw stars (on fresh background areas)
+  drawStars(time / 1000);
+
+  // Draw interactive objects
+  ctx.globalCompositeOperation = 'lighter';
+  drawObjects();
+
+  // Draw ambient particles
+  for (const a of ambient) a.draw(ctx, 0.4);
+
+  // Draw particles
+  for (const p of particles) {
+    if (p.alive) p.draw(ctx);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Hint fade
+  if (hintTimer < HINT_DELAY) {
+    hintTimer += dt;
+    if (hintTimer >= HINT_DELAY) {
+      document.getElementById('hint').classList.add('fade');
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+/* ─── Pointer Events ─── */
+function getPos(e) {
+  const t = e.touches ? e.touches[0] : e;
+  return { x: t.clientX, y: t.clientY, e: t };
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const { x, y } = getPos(e);
+  pointerActive = true;
+  pointerX = x; pointerY = y;
+  lastPointerX = x; lastPointerY = y;
+  pointerSpeed = 0;
+  onTap(x, y);
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const { x, y } = getPos(e);
+  lastPointerX = pointerX; lastPointerY = pointerY;
+  pointerX = x; pointerY = y;
+  pointerSpeed = Math.hypot(x - lastPointerX, y - lastPointerY);
+  onDrag(x, y);
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  pointerActive = false;
+}, { passive: false });
+
+canvas.addEventListener('mousedown', (e) => {
+  pointerActive = true;
+  pointerX = e.clientX; pointerY = e.clientY;
+  lastPointerX = e.clientX; lastPointerY = e.clientY;
+  pointerSpeed = 0;
+  onTap(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!pointerActive) return;
+  lastPointerX = pointerX; lastPointerY = pointerY;
+  pointerX = e.clientX; pointerY = e.clientY;
+  pointerSpeed = Math.hypot(e.clientX - lastPointerX, e.clientY - lastPointerY);
+  onDrag(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('mouseup', () => { pointerActive = false; });
+canvas.addEventListener('mouseleave', () => { pointerActive = false; });
+
+/* ─── Mode Switching ─── */
+const buttons = document.querySelectorAll('#ui button');
+const label = document.getElementById('mode-label');
+
+for (const btn of buttons) {
+  btn.addEventListener('click', () => {
+    // Clear existing interactive objects
+    wells = []; vortices = [];
+    // Reset hint
+    hintTimer = 0;
+    document.getElementById('hint').classList.remove('fade');
+
+    buttons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    mode = btn.dataset.mode;
+    label.textContent = modeNames[mode] || mode;
+
+    // Spawn mode intro
+    const cx = W / 2, cy = H / 2;
+    if (mode === MODE.GRAVITY) {
+      document.getElementById('hint').textContent = 'tap to create gravity wells';
+      for (let i = 0; i < 3; i++) {
+        setTimeout(() => spawnGravityWell(
+          cx + rand(-100, 100), cy + rand(-100, 100)
+        ), i * 200);
+      }
+    } else if (mode === MODE.FIREWORKS) {
+      document.getElementById('hint').textContent = 'tap to launch fireworks';
+      spawnFireworks(cx, cy);
+      setTimeout(() => spawnFireworks(cx + rand(-80, 80), cy - rand(30, 80)), 300);
+    } else if (mode === MODE.VORTEX) {
+      document.getElementById('hint').textContent = 'tap to create vortices';
+      spawnVortex(cx, cy);
+    } else if (mode === MODE.PAINTBRUSH) {
+      document.getElementById('hint').textContent = 'drag to paint with particles';
+      spawnPaintBurst(cx, cy);
+    }
+  });
+}
+
+/* ─── Start ─── */
+// Initial burst
+setTimeout(() => {
+  spawnFireworks(W / 2, H * 0.4);
+  setTimeout(() => spawnFireworks(W * 0.4, H * 0.3), 200);
+  setTimeout(() => spawnFireworks(W * 0.6, H * 0.35), 400);
+}, 500);
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
