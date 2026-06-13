@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Splash</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; overflow: hidden; touch-action: none; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #info {
+    position: fixed; bottom: 30px; left: 0; right: 0; text-align: center;
+    color: rgba(255,255,255,0.2); font-size: 14px; letter-spacing: 2px;
+    pointer-events: none; font-family: system-ui, sans-serif;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">TAP ANYWHERE</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const particles = [];
+const COLORS = ['#ff6b6b','#ffd93d','#6bcbff','#a66cff','#ff6bff','#6bffb8','#ff9f43'];
+
+function burst(x, y, count = 80) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 6;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.008 + Math.random() * 0.012,
+      size: 2 + Math.random() * 4,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)]
+    });
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  const rect = canvas.getBoundingClientRect();
+  burst(e.clientX - rect.left, e.clientY - rect.top);
+});
+
+function animate() {
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.98;
+    p.vy *= 0.98;
+    p.life -= p.decay;
+
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+
+    const alpha = p.life;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Random auto-bursts to keep it lively
+  if (particles.length < 200 && Math.random() < 0.02) {
+    burst(Math.random() * W, Math.random() * H, 30);
+  }
+
+  requestAnimationFrame(animate);
+}
+animate();
+
+// Initial bursts
+burst(W/2, H/2, 120);
+setTimeout(() => burst(W/3, H/3, 60), 300);
+setTimeout(() => burst(2*W/3, 2*H/3, 60), 600);
+</script>
+</body>
+</html>
