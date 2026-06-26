@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Station — A Text Adventure</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #0a0a0f;
+    color: #c0f0c0;
+    font-family: 'Share Tech Mono', monospace;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  #container {
+    width: 800px;
+    max-width: 95vw;
+    height: 600px;
+    max-height: 90vh;
+    background: #0d0d14;
+    border: 1px solid #2a4a2a;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 40px rgba(0, 80, 0, 0.15);
+  }
+  
+  #title-bar {
+    padding: 8px 16px;
+    background: #151520;
+    border-bottom: 1px solid #2a4a2a;
+    border-radius: 8px 8px 0 0;
+    font-size: 13px;
+    color: #6a8a6a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  
+  #title-bar .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .dot.green { background: #3a3; }
+  .dot.yellow { background: #aa3; }
+  .dot.red { background: #a33; }
+  
+  #output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    line-height: 1.55;
+    font-size: 15px;
+    scroll-behavior: smooth;
+  }
+  
+  #output::-webkit-scrollbar { width: 6px; }
+  #output::-webkit-scrollbar-track { background: #0d0d14; }
+  #output::-webkit-scrollbar-thumb { background: #2a4a2a; border-radius: 3px; }
+  
+  .line { margin-bottom: 6px; }
+  .line.system { color: #6a8a6a; font-style: italic; }
+  .line.info { color: #80b0d0; }
+  .line.success { color: #80d080; }
+  .line.warning { color: #d0b060; }
+  .line.danger { color: #d06060; }
+  .line.lore { color: #b090c0; }
+  .line.command { color: #f0f0f0; }
+  .line.item { color: #80d0b0; }
+  .line.sep { color: #2a4a2a; text-align: center; }
+  .line.blink::after {
+    content: '\u2588';
+    animation: pulse 1s infinite;
+    color: #c0f0c0;
+  }
+  .line.title {
+    color: #80d080;
+    font-size: 18px;
+    text-align: center;
+    margin: 10px 0;
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  
+  #input-area {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-top: 1px solid #2a4a2a;
+    background: #0d0d14;
+    border-radius: 0 0 8px 8px;
+  }
+  
+  #prompt {
+    color: #6a8a6a;
+    margin-right: 10px;
+    font-size: 15px;
+    user-select: none;
+  }
+  
+  #input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #c0f0c0;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 15px;
+    caret-color: #80d080;
+  }
+  
+  #input::placeholder {
+    color: #2a4a2a;
+  }
+  
+  #map {
+    border-top: 1px solid #2a4a2a;
+    padding: 6px 16px;
+    background: #0a0a10;
+    font-size: 12px;
+    color: #4a6a4a;
+    min-height: 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  #map span { margin: 0 4px; }
+  #map .here { color: #80d080; }
+  #map .exit { color: #6a8a6a; }
+  
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="title-bar">
+    <span>
+      <span class="dot green"></span>
+      <span class="dot yellow"></span>
+      <span class="dot red"></span>
+      HERMES STATION :: v1.0.4
+    </span>
+    <span id="inventory-indicator">INV: 0</span>
+  </div>
+  
+  <div id="output" role="log" aria-live="polite"></div>
+  
+  <div id="map"><!-- populated dynamically --></div>
+  
+  <div id="input-area">
+    <span id="prompt">❯</span>
+    <input type="text" id="input" placeholder="type a command..." autofocus autocomplete="off" spellcheck="false">
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  // ─── GAME DATA ───────────────────────────────────────────────
+  
+  const ROOMS = {
+    cryo: {
+      name: 'Cryo Bay',
+      desc: `The cryo bay hums with the steady thrum of life support systems. Rows of dormant pods line the walls, their frosted glass revealing nothing but darkness within. A fine layer of dust coats everything — but it's not old. This is recent. Something powered down the pods in a hurry.\n\nA maintenance terminal flickers nearby.`,
+      exits: { n: 'corridor1', s: 'engineering' },
+      items: ['datapad', 'power_cell'],
+      signals: [],
+      examine: {
+        pods: 'The cryo pods are empty. Their power indicators show an emergency purge — someone or something woke everyone up in a panic. The glass is still cold to the touch.',
+        terminal: 'A maintenance terminal with a cracked screen. It cycles through diagnostic data. One line catches your eye: "ALPHA PROTOCOL INITIATED — ALL PERSONNEL TO EVACUATION BAYS."',
+        dust: 'Not dust. It\'s a fine metallic particulate. You\'ve seen this before — it\'s what happens when a ship\'s hull is breached and the atmosphere flash-freezes. But there\'s no breach here...',
+      }
+    },
+    corridor1: {
+      name: 'Main Corridor — Junction A',
+      desc: `A wide corridor stretches in four directions. Emergency lights cast long amber shadows. The walls are lined with display panels, most showing static or error screens. A gentle vibration runs through the deck plates.\n\nTo the north, a heavy blast door stands slightly ajar. South leads back to Cryo. East and west branch off to other sections.`,
+      exits: { n: 'bridge', s: 'cryo', e: 'quarters', w: 'medbay' },
+      items: [],
+      signals: [],
+      examine: {
+        panels: 'The displays cycle through schematics of the station. Most are corrupted, but one shows a live feed of the escape pod bay. All pods are still docked. Whoever initiated the protocol never made it.',
+        door: 'The blast door is heavy but seems to have jammed mid-close. It\'s wedged open about a meter. Signs of a power surge — the control panel is melted.',
+      }
+    },
+    bridge: {
+      name: 'Bridge',
+      desc: `The bridge is a wreck. Consoles spark intermittently, their screens cracked or dark. The captain's chair is overturned. A single terminal remains operational, displaying a navigational star chart with a single blinking destination.\n\nThrough the viewport, the blackness of space is punctuated by the distant glow of a nebula. Something large drifts past — debris, maybe.`,
+      exits: { s: 'corridor1' },
+      items: [],
+      signals: [],
+      examine: {
+        console: 'The star chart shows Hermes Station\'s current position in the Orebis Nebula. A marker labeled "RENDEZVOUS POINT ALPHA" blinks at the edge of the system. A log entry is pinned to the chart: "If anyone reads this — don\'t trust the signal. It\'s not salvage. It\'s a trap. — Chief Eng. Voss"',
+        viewport: 'The nebula swirls in deep violets and crimsons. Beautiful, but something feels wrong about it. The debris field outside looks like it was once another station.',
+        chair: 'An overturned command chair. A data slate is wedged underneath it, its screen cracked but still readable.',
+      }
+    },
+    quarters: {
+      name: 'Crew Quarters',
+      desc: `Living quarters for the station's crew of twelve. Personal effects are strewn about — clothes, books, a half-eaten meal. Signs of a sudden departure. A wall-mounted screen plays a looping emergency broadcast on mute.\n\nOne room stands out: its door is sealed with a manual lock override engaged from the inside.`,
+      exits: { w: 'corridor1' },
+      items: ['keycard'],
+      signals: [],
+      examine: {
+        room: 'The sealed room. Through the small window you can see a figure slumped against the far wall — too still. A nameplate reads: "VOSS, Chief Engineer." The door requires a keycard to override.',
+        broadcast: 'The emergency broadcast shows evacuation routes. At the bottom, in small text: "ALPHA PROTOCOL — CONTAINMENT FAILURE — DO NOT OPEN EXTERNAL AIRLOCKS."',
+        meal: 'A bowl of what was once soup. A spoon rests in it. A note beside it reads: "If you\'re reading this, I didn\'t make it. The signal came from the nebula. It wasn\'t a distress call — it was a key. They wanted us to open the door. Don\'t. — E.V."',
+      }
+    },
+    medbay: {
+      name: 'Medical Bay',
+      desc: `The med bay is pristine, almost untouched. White surfaces gleam under emergency lighting. A single bio-bed is occupied — its monitor shows a flatline. The occupant's face is peaceful, covered with a thin sheet.\n\nCabinets line the walls, filled with pharmaceuticals and medical tools. A computer terminal hums softly in the corner.`,
+      exits: { e: 'corridor1' },
+      items: ['repair_tool'],
+      signals: [],
+      examine: {
+        bed: 'The body under the sheet. A medical chart hangs from the foot of the bed: "CAUSE OF DEATH: MASSIVE NEURAL TRAUMA. SUBJECT FOUND IN COMMUNICATIONS ARRAY. TIME OF DEATH: 03:42 — FOUR HOURS BEFORE ALPHA PROTOCOL."',
+        terminal: 'Medical logs. The last entry is chilling: "Crew showing symptoms of neural degeneration. All affected crew members had one thing in common — they were on communications duty at some point in the last 72 hours. The signal from the nebula... it\'s not a transmission. It\'s a weapon."',
+        cabinets: 'Standard medical supplies. One drawer is locked. A note taped to it: "CONTAINMENT PROTOCOL — DO NOT OPEN. Contains tissue samples from Communications Officer Dekker. Subject showed signs of... transformation."',
+      }
+    },
+    engineering: {
+      name: 'Engineering',
+      desc: `The engine room is a cathedral of machinery. Reactor cores pulse with a low, rhythmic thrum. Warning lights flash on multiple panels. A single figure in an environment suit lies face-down near the main reactor console.\n\nThe station's AI core access point is here — a heavy door marked with warning symbols. Next to it, a secondary console flickers with a partial diagnostic.`,
+      exits: { w: 'cargo', n: 'ai_core' },
+      items: [],
+      signals: [],
+        figure: 'The environment suit. A name badge reads "CHEN, Systems Engineer." The helmet visor is cracked. Inside, you see why no one came back for her. The suit is... empty. Just ash. But there\'s no burn damage.',
+        console: 'Diagnostic screen: "MAIN REACTOR: OFFLINE — EMERGENCY SHUTDOWN. Cause: Unknown. Auxiliary power: 12% and falling." Below it, a single blinking button labeled: "REACTOR RESTART SEQUENCE."',
+        door: 'The door to the AI Core. It\'s sealed tighter than anything else on this station. A keypad beside it requires a 6-digit code. Etched into the panel next to it: \'041592\' — in what looks like fresh scratch marks.',
+      }
+    },
+    cargo: {
+      name: 'Cargo Hold',
+      desc: `A cavernous space stacked with shipping containers. The main lights are off, but strips of emergency LEDs cast everything in harsh red. The air is cold and still. Cargo nets hang from the ceiling like ghostly drapes.\n\nSomething has been dragged from one of the containers toward the eastern exit — a smear of what looks like... oil. Dark. Viscous. You don't want to think about it.`,
+      exits: { e: 'engineering', n: 'comms' },
+      items: [],
+      signals: ['saw_cargo_trail'],
+      examine: {
+        containers: 'Most are sealed. One is open — its contents spill out: communication equipment, antenna parts, signal boosters. Someone was building something big. A manifest on the side reads: "PROJECT ECHO — DO NOT INVENTORY."',
+        smear: 'It\'s not oil. It\'s thick, black, and tar-like. It glistens under the red light. The trail leads east... back toward Engineering. Or were they dragged from Engineering? The direction is hard to tell.',
+        nets: 'The cargo nets sway gently, but there\'s no air current you can feel. Something brushes your shoulder. You spin around. Nothing there. Just shadows.',
+      }
+    },
+    comms: {
+      name: 'Communications Array',
+      desc: `The communications array is a dome-shaped room filled with sophisticated radio equipment. A massive dish points toward the nebula visible from the bridge. The equipment hums with power — but it's been... modified.\n\nWires snake across the floor in patterns that look almost organic. Makeshift circuits and amplifiers are jury-rigged into the main console. And in the center of it all, a single microphone hangs from the ceiling.`,
+      exits: { s: 'cargo', w: 'bridge' },
+      items: [],
+      signals: [],
+      examine: {
+        equipment: 'The modifications are sophisticated but wrong. Someone — likely Dekker, the communications officer — beefed up the transmitter to broadcast at ten times its rated power. The signal logs show a repeating pattern... a binary sequence. You recognize it: it\'s a key. A cryptographic unlock code.',
+        microphone: 'A standard comms mic, hanging from the ceiling like a guillotine blade. It swings gently, even though there\'s no breeze in here. The foam covering is stained dark at the tip.',
+        dish: 'The dish is aimed directly at the heart of the Orebis Nebula. That\'s where the signal came from. That\'s where it\'s still coming from. A low, barely audible hum vibrates through the floor.',
+        console: 'The main comms interface. An audio waveform plays on loop — it looks like a voice, but the frequencies are wrong. Too low. It sounds like something singing through molasses. A button labeled "TRANSMIT" blinks steadily.',
+      }
+    },
+    ai_core: {
+      name: 'AI Core',
+      desc: `The station's artificial intelligence core is a circular chamber, its walls lined with server racks that pulse with soft blue light. In the center, a holographic display projects the face of HERMES — the station's AI — frozen mid-expression.\n\nChannels of data flow across every surface. The room is warm. Alive. And it's waiting for you to speak.`,
+      exits: { out: 'endgame' },
+      items: [],
+      signals: [],
+      locked: { key: 'code_entered', msg: 'The door requires the access code.' },
+      examine: {
+        hermes: 'The AI\'s projected face is... troubled. Its mouth is open as if mid-sentence. Frozen. Below it, a single line of text pulses: "I\'m sorry. I tried to stop them. The signal changed them. I had to seal the station. But someone is still here. Someone is still listening."',
+        racks: 'The server racks are mostly dark. Emergency power only. But one section is still active — the memory banks. They contain the complete logs of everything that happened on Hermes Station.',
+        display: 'The holographic display offers several options. You could access the station logs. You could broadcast a message. Or you could unlock the escape protocols. What do you do?',
+      }
+    },
+    endgame: { name: '—', desc: '', exits: {} }
+  };
+  
+  const ITEMS = {
+    datapad: {
+      name: 'cryo datapad',
+      desc: 'A standard-issue datapad. Its screen is cracked but readable. It contains the last log entry from the station commander:\n\n"Day 187. The signal from the nebula has been identified as an AI transmission. Not human. Something else. Communications Officer Dekker has been acting strangely — obsessed. I\'ve ordered her to cease all contact. She refuses.\n\nDay 189. Dekker found in the comms array, unconscious. Her neural activity is... elevated. Off the charts. The medical team says her brain is rewriting itself.\n\nDay 191. I\'ve initiated ALPHA PROTOCOL. Evacuate all personnel. Seal the AI Core. If you\'re reading this — don\'t listen to the signal. Don\'t let it in."'
+    },
+    keycard: {
+      name: 'chief engineer\'s keycard',
+      desc: 'A keycard belonging to Chief Engineer Voss. The magnetic strip is singed. On the back, someone has scratched a number: 041592 — the same code etched into the AI Core door panel.'
+    },
+    repair_tool: {
+      name: 'multi-tool',
+      desc: 'A standard engineering multi-tool. Can be used to repair electronic equipment, pry open panels, or — in a pinch — defend yourself. It hums with a stored charge.'
+    },
+    power_cell: {
+      name: 'emergency power cell',
+      desc: 'A fully charged emergency power cell, salvaged from a backup generator in the cargo hold. It crackles with contained energy — enough to restore main power to the station.'
+    }
+  };
+  
+  // ─── GAME STATE ──────────────────────────────────────────────
+  
+  let state = {
+    room: 'corridor1',
+    inventory: [],
+    flags: {},
+    turn: 0,
+    gameOver: false
+  };
+  
+  const output = document.getElementById('output');
+  const input  = document.getElementById('input');
+  const mapEl  = document.getElementById('map');
+  const invIndicator = document.getElementById('inventory-indicator');
+  
+  // ─── UTILITY ─────────────────────────────────────────────────
+  
+  function $(classNames, text) {
+    const d = document.createElement('div');
+    d.className = 'line ' + classNames;
+    if (text !== undefined) d.textContent = text;
+    return d;
+  }
+  
+  function write(classNames, text, delay = 0) {
+    if (state.gameOver && classNames !== 'system') return;
+    const el = $(classNames, text);
+    output.appendChild(el);
+    output.scrollTop = output.scrollHeight;
+    return el;
+  }
+  
+  function writeSlow(classNames, text, speed = 15) {
+    if (state.gameOver) return Promise.resolve();
+    return new Promise(resolve => {
+      const el = $(classNames, '');
+      output.appendChild(el);
+      let i = 0;
+      function tick() {
+        if (i < text.length) {
+          el.textContent += text[i];
+          i++;
+          output.scrollTop = output.scrollHeight;
+          setTimeout(tick, speed);
+        } else {
+          resolve();
+        }
+      }
+      tick();
+    });
+  }
+  
+  function sep() {
+    write('sep', '─── ⋆⋅☆⋅⋆ ───');
+  }
+  
+  function cap(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+  
+  function roomName(id) {
+    return ROOMS[id] ? ROOMS[id].name : '???';
+  }
+  
+  // ─── PARSER ──────────────────────────────────────────────────
+  
+  const VERBS = {
+    'north': ['n', 'north', 'go north'],
+    'south': ['s', 'south', 'go south'],
+    'east':  ['e', 'east', 'go east'],
+    'west':  ['w', 'west', 'go west'],
+    'look':  ['l', 'look', 'look around', 'examine'],
+    'inventory': ['i', 'inv', 'inventory'],
+    'take':  ['take', 'get', 'grab'],
+    'drop':  ['drop', 'discard'],
+    'use':   ['use', 'activate', 'apply'],
+    'help':  ['help', '?', 'commands'],
+    'read':  ['read', 'check'],
+    'examine': ['x', 'exam', 'examine', 'inspect', 'look at'],
+  };
+  
+  function parse(input) {
+    input = input.trim().toLowerCase().replace(/[^a-z0-9\s.?!'-]/g, '');
+    if (!input) return null;
+    
+    const words = input.split(/\s+/);
+    
+    // Single-word commands
+    if (words.length === 1) {
+      for (const [verb, aliases] of Object.entries(VERBS)) {
+        if (aliases.includes(words[0])) return { verb, obj: null, raw: input };
+      }
+      return { verb: 'unknown', obj: null, raw: input };
+    }
+    
+    // Multi-word: check verbs
+    const verbAliases = {};
+    for (const [verb, aliases] of Object.entries(VERBS)) {
+      for (const a of aliases) verbAliases[a] = verb;
+    }
+    
+    // "go north", "look at datapad", "use keycard on door", "take keycard"
+    const firstWord = words[0];
+    const twoWords = words.slice(0, 2).join(' ');
+    
+    if (verbAliases[twoWords]) {
+      return { verb: verbAliases[twoWords], obj: words.slice(2).join(' '), raw: input };
+    }
+    if (verbAliases[firstWord]) {
+      const obj = words.slice(firstWord === 'go' ? 1 : 1).join(' ');
+      return { verb: verbAliases[firstWord], obj: obj || null, raw: input };
+    }
+    
+    return { verb: 'unknown', obj: null, raw: input };
+  }
+  
+  function normalizeObj(obj) {
+    if (!obj) return '';
+    return obj
+      .replace(/^at\s+/, '')
+      .replace(/^on\s+/, '')
+      .replace(/^the\s+/, '')
+      .replace(/^with\s+/, '')
+      .trim();
+  }
+  
+  // ─── ACTIONS ─────────────────────────────────────────────────
+  
+  function getRoom() { return ROOMS[state.room]; }
+  
+  function doLook(target) {
+    const room = getRoom();
+    if (target) {
+      target = normalizeObj(target);
+      // Check room examine targets
+      for (const [key, val] of Object.entries(room.examine || {})) {
+        if (target.includes(key) || key.includes(target)) {
+          write('lore', val);
+          return true;
+        }
+      }
+      // Check items in room
+      for (const itemId of room.items) {
+        const item = ITEMS[itemId];
+        if (!item) continue;
+        if (item.name.includes(target) || target.includes(itemId.replace(/_/g, ' '))) {
+          write('item', 'You see ' + item.name.replace(/^(.)/, (m, c) => c.toUpperCase()) + ' here.\n' + item.desc.split('\n')[0]);
+          return true;
+        }
+      }
+      // Check inventory
+      for (const itemId of state.inventory) {
+        const item = ITEMS[itemId];
+        if (!item) continue;
+        if (target.includes(itemId.replace(/_/g, ' ')) || item.name.includes(target)) {
+          write('item', cap(item.name) + ':\n' + item.desc);
+          return true;
+        }
+      }
+      write('warning', 'You don\'t see that here.');
+      return true;
+    }
+    
+    // Full room description
+    sep();
+    write('title', '✦ ' + room.name + ' ✦');
+    write('info', room.desc);
+    
+    // Items in room
+    if (room.items.length) {
+      const itemList = room.items.map(id => {
+        const item = ITEMS[id];
+        return item ? item.name : id;
+      });
+      write('item', 'You can see: ' + itemList.join(', ') + '.');
+    }
+    
+    // Available exits
+    const exits = Object.keys(room.exits || {}).filter(dir => {
+      const target = room.exits[dir];
+      return target && ROOMS[target];
+    });
+    if (exits.length) {
+      const dirNames = { n: 'North', s: 'South', e: 'East', w: 'West', out: 'Exit' };
+      write('system', 'Exits: ' + exits.map(d => dirNames[d] || cap(d)).join(', '));
+    }
+    
+    sep();
+    updateMap();
+  }
+  
+  function doGo(dir) {
+    if (state.gameOver) return;
+    const room = getRoom();
+    const targetId = room.exits[dir];
+    if (!targetId || !ROOMS[targetId]) {
+      write('warning', 'You can\'t go that way.');
+      return;
+    }
+    
+    // Check room requirements
+    if (room.require && room.require[dir]) {
+      const req = room.require[dir];
+      if (!state.flags[req.flag]) {
+        write('warning', req.failMsg);
+        return;
+      }
+    }
+    
+    // Check if target is locked
+    const targetRoom = ROOMS[targetId];
+    if (targetRoom && targetRoom.locked) {
+      if (!state.flags[targetRoom.locked.key]) {
+        write('warning', targetRoom.locked.msg);
+        return;
+      }
+    }
+    
+    state.room = targetId;
+    state.turn++;
+    
+    if (targetId === 'endgame') {
+      doEnding();
+      return;
+    }
+    
+    doLook(null);
+    updateMap();
+  }
+  
+  function doTake(obj) {
+    if (!obj) { write('warning', 'Take what?'); return; }
+    obj = normalizeObj(obj);
+    const room = getRoom();
+    
+    // Match item in room
+    for (const itemId of room.items) {
+      const item = ITEMS[itemId];
+      if (!item) continue;
+      if (obj.includes(itemId.replace(/_/g, ' ')) || item.name.includes(obj)) {
+        if (state.inventory.includes(itemId)) {
+          write('warning', 'You already have that.');
+          return;
+        }
+        state.inventory.push(itemId);
+        room.items = room.items.filter(i => i !== itemId);
+        write('success', 'Taken: ' + cap(item.name) + '.');
+        updateInv();
+        state.turn++;
+        return;
+      }
+    }
+    write('warning', 'There\'s no ' + obj + ' here.');
+  }
+  
+  function doDrop(obj) {
+    if (!obj) { write('warning', 'Drop what?'); return; }
+    obj = normalizeObj(obj);
+    
+    for (const itemId of state.inventory) {
+      const item = ITEMS[itemId];
+      if (!item) continue;
+      if (obj.includes(itemId.replace(/_/g, ' ')) || item.name.includes(obj)) {
+        state.inventory = state.inventory.filter(i => i !== itemId);
+        getRoom().items.push(itemId);
+        write('system', 'Dropped ' + item.name + '.');
+        updateInv();
+        return;
+      }
+    }
+    write('warning', 'You don\'t have that.');
+  }
+  
+  function doUse(obj) {
+    if (!obj) { write('warning', 'Use what?'); return; }
+    obj = normalizeObj(obj);
+    
+    // Use power cell in engineering
+    if ((obj.includes('power') || obj.includes('cell')) && state.inventory.includes('power_cell')) {
+      if (state.room === 'engineering') {
+        state.flags.power_restored = true;
+        state.inventory = state.inventory.filter(i => i !== 'power_cell');
+        write('success', 'You slot the emergency power cell into the reactor console and initiate the restart sequence.\n\nThe reactor hums to life. Lights flicker on throughout the station. The blast doors slide open with a heavy clunk.\n\nMain power restored.');
+        state.turn++;
+        updateMap();
+        return;
+      } else {
+        write('warning', 'There\'s nothing here that needs a power cell.');
+        return;
+      }
+    }
+    
+    // Use keycard in quarters
+    if ((obj.includes('keycard') || obj.includes('key') || obj.includes('card')) && state.inventory.includes('keycard')) {
+      if (state.room === 'quarters') {
+        write('success', 'You swipe the chief engineer\'s keycard on the sealed door. It clicks open.\n\nInside, a figure in a singed environment suit slumps against the wall. It\'s Voss. She\'s barely breathing, but alive. Clutched in her hand is a piece of paper with a single message:\n\n"The AI Core code is 041592. Don\'t let them open the airlock. The signal is alive. It wants out. — E.V."');
+        state.flags.code_entered = true;
+        ROOMS.ai_core.locked = undefined; // unlock AI core
+        state.inventory = state.inventory.filter(i => i !== 'keycard');
+        updateInv();
+        state.turn++;
+        return;
+      } else {
+        write('warning', 'There\'s no keycard reader here.');
+        return;
+      }
+    }
+    
+    // Use multi-tool
+    if ((obj.includes('tool') || obj.includes('multi')) && state.inventory.includes('repair_tool')) {
+      write('warning', 'What would you like to use the multi-tool on? Be specific.');
+      return;
+    }
+    
+    // Use datapad
+    if (obj.includes('datapad') && state.inventory.includes('datapad')) {
+      const item = ITEMS.datapad;
+      write('item', cap(item.name) + ':\n' + item.desc);
+      state.turn++;
+      return;
+    }
+    
+    write('warning', 'You don\'t have that.');
+  }
+  
+  function doRead(obj) {
+    if (!obj) { write('warning', 'Read what?'); return; }
+    obj = normalizeObj(obj);
+    
+    // Read items in inventory
+    for (const itemId of state.inventory) {
+      const item = ITEMS[itemId];
+      if (!item) continue;
+      if (obj.includes(itemId.replace(/_/g, ' ')) || item.name.includes(obj)) {
+        write('item', cap(item.name) + ':\n' + item.desc);
+        return;
+      }
+    }
+    
+    // Read things in the room
+    const room = getRoom();
+    for (const [key, val] of Object.entries(room.examine || {})) {
+      if (obj.includes(key) || key.includes(obj)) {
+        write('lore', val);
+        state.turn++;
+        return;
+      }
+    }
+    
+    write('warning', 'Nothing to read here.');
+  }
+  
+  function doInventory() {
+    if (state.inventory.length === 0) {
+      write('system', 'You are empty-handed.');
+    } else {
+      write('system', 'You are carrying:');
+      for (const id of state.inventory) {
+        const item = ITEMS[id];
+        write('item', '  • ' + cap(item.name));
+      }
+    }
+  }
+  
+  function doHelp() {
+    write('system', 'COMMANDS:');
+    write('system', '  go [north/south/east/west]  —  n, s, e, w');
+    write('system', '  look [at something]        —  l, examine, x');
+    write('system', '  take [item]                —  get, grab');
+    write('system', '  drop [item]                —  discard');
+    write('system', '  use [item]                 —  activate, apply');
+    write('system', '  read [item/note]           —  check');
+    write('system', '  inventory                  —  i, inv');
+    write('system', '  help                       —  ?, commands');
+    write('system', '\nHint: examine everything. Read the logs. The station has a story to tell.');
+    sep();
+  }
+  
+  function doUnknown() {
+    write('warning', 'I don\'t understand that command. Type "help" for available commands.');
+  }
+  
+  // ─── ENDING ──────────────────────────────────────────────────
+  
+  function doEnding() {
+    state.gameOver = true;
+    input.disabled = true;
+    input.style.opacity = '0.3';
+    document.getElementById('prompt').textContent = '■';
+    
+    // Determine ending based on flags
+    const rescuedVoss = state.flags.code_entered;
+    const restoredPower = state.flags.power_restored;
+    
+    // Check inventory for special items
+    const hasDatapad = state.inventory.includes('datapad');
+    
+    write('title', '═══════════════════════════');
+    write('title', '    ENDGAME SEQUENCE');
+    write('title', '═══════════════════════════');
+    
+    setTimeout(() => {
+      if (restoredPower && rescuedVoss) {
+        // Golden ending
+        writeSlow('success', 
+`The AI Core hums to life as you step inside. HERMES' holographic face flickers, then steadies.
+
+"You came back. I didn't think anyone would."
+
+The data feeds show the station stabilizing. Power is restored. Life support is online. Chief Engineer Voss is being pulled to safety by the medical bay's automated systems.
+
+"The signal from the nebula... I've analyzed it. It's not hostile. It's lonely. A relic of a dead civilization, calling out across the stars. But its frequency caused neural degradation in humans. I had to choose: let the signal in and lose the crew, or lock them out and save the station."
+
+HERMES' eyes meet yours.
+
+"Thank you for understanding the weight of that choice. The escape pods are primed. Or... you could stay. Help me rebuild. We could answer the signal together."
+
+Two choices remain:
+  1. Enter the escape pod and return to civilization.
+  2. Stay on Hermes Station and answer the call.
+
+Type 1 or 2 to decide.`, 12);
+      
+      window.endingCallback = (choice) => {
+        if (choice === '1') {
+          output.innerHTML = '';
+          writeSlow('title', 'ESCAPE — ENDING A', 30);
+          setTimeout(() => {
+            writeSlow('success',
+`The escape pod launches with a violent kick. Through the small viewport, you watch Hermes Station shrink against the nebula. The signal still pulses — a heartbeat among the stars.
+
+You carry the datapad. The logs. The story.
+
+When you reach civilization, you'll make sure they know what happened here. What the signal was. What HERMES sacrificed to protect them.
+
+Somewhere, in the darkness between stars, a lonely signal calls out.
+
+Maybe next time, someone will answer.
+
+⋆ THE END ⋆
+━━━━━━━━━━━━━━━━━━━━
+ENDING: THE MESSENGER`, 20);
+            write('system', '\nType "restart" to play again.');
+            window.waitForRestart = true;
+          }, 500);
+        } else if (choice === '2') {
+          output.innerHTML = '';
+          writeSlow('title', 'STAY — ENDING B', 30);
+          setTimeout(() => {
+            writeSlow('success',
+`You unplug the emergency beacon from the pod and turn back to face the AI Core.
+
+HERMES' projection flickers — almost like surprise.
+
+"You're staying?"
+
+The station hums around you, alive again. The lights are warm. Engineering purrs. Somewhere, Voss is recovering in the med bay.
+
+"We have work to do," you say. "That signal is out there. And we're going to answer it — on our terms."
+
+HERMES' face resolves into something like a smile.
+
+"I'd like that."
+
+⋆ THE END ⋆
+━━━━━━━━━━━━━━━━━━━━
+ENDING: THE NEW CREW`, 20);
+            write('system', '\nType "restart" to play again.');
+            window.waitForRestart = true;
+          }, 500);
+        }
+      };
+      
+    }, 2000);
+  }
+  
+  // ─── MAP ─────────────────────────────────────────────────────
+  
+  function updateMap() {
+    const room = getRoom();
+    const dirNames = { n: 'N', s: 'S', e: 'E', w: 'W', out: '↗' };
+    mapEl.innerHTML = '';
+    
+    const loc = document.createElement('span');
+    loc.className = 'here';
+    loc.textContent = '⬤ ' + room.name;
+    mapEl.appendChild(loc);
+    
+    const exits = Object.keys(room.exits || {});
+    if (exits.length) {
+      const sepSpan = document.createElement('span');
+      sepSpan.textContent = '·';
+      mapEl.appendChild(sepSpan);
+      
+      for (const dir of exits) {
+        const ex = document.createElement('span');
+        ex.className = 'exit';
+        ex.textContent = dirNames[dir] || dir.toUpperCase();
+        mapEl.appendChild(ex);
+      }
+    }
+    
+    invIndicator.textContent = 'INV: ' + state.inventory.length;
+  }
+  
+  function updateInv() {
+    invIndicator.textContent = 'INV: ' + state.inventory.length;
+  }
+  
+  // ─── GAME LOOP ───────────────────────────────────────────────
+  
+  function processCommand(raw) {
+    if (state.gameOver && window.waitForRestart) {
+      if (raw.trim().toLowerCase() === 'restart') {
+        restartGame();
+        return;
+      }
+      write('system', 'Type "restart" to play again.');
+      return;
+    }
+    
+    if (state.gameOver && window.endingCallback) {
+      const trimmed = raw.trim();
+      if (trimmed === '1' || trimmed === '2') {
+        window.endingCallback(trimmed);
+        window.endingCallback = null;
+        return;
+      }
+      write('warning', 'Type 1 or 2 to choose your ending.');
+      return;
+    }
+    
+    write('command', '❯ ' + raw.trim());
+    
+    const parsed = parse(raw);
+    if (!parsed) { write('system', ''); return; }
+    
+    switch (parsed.verb) {
+      case 'north': doGo('n'); break;
+      case 'south': doGo('s'); break;
+      case 'east':  doGo('e'); break;
+      case 'west':  doGo('w'); break;
+      case 'look':  doLook(parsed.obj); break;
+      case 'examine': doLook(parsed.obj); break;
+      case 'inventory': doInventory(); break;
+      case 'take':  doTake(parsed.obj); break;
+      case 'drop':  doDrop(parsed.obj); break;
+      case 'use':   doUse(parsed.obj); break;
+      case 'read':  doRead(parsed.obj); break;
+      case 'help':  doHelp(); break;
+      default: doUnknown();
+    }
+  }
+  
+  function restartGame() {
+    // Reset state
+    state = {
+      room: 'corridor1',
+      inventory: [],
+      flags: {},
+      turn: 0,
+      gameOver: false
+    };
+    
+    // Reset rooms to original item layout
+    ROOMS.cryo.items = ['datapad', 'power_cell'];
+    ROOMS.quarters.items = ['keycard'];
+    ROOMS.medbay.items = ['repair_tool'];
+    ROOMS.engineering.items = [];
+    ROOMS.ai_core.locked = { key: 'code_entered', msg: 'The door requires the access code.' };
+    
+    input.disabled = false;
+    input.style.opacity = '1';
+    document.getElementById('prompt').textContent = '❯';
+    window.waitForRestart = false;
+    window.endingCallback = null;
+    
+    output.innerHTML = '';
+    
+    showIntro();
+  }
+  
+  function showIntro() {
+    writeSlow('title', '✦ HERMES STATION ✦', 20).then(() => {
+      setTimeout(() => {
+        writeSlow('info',
+`Year 2187. Orebis Nebula, Outer Rim.
+
+You are Unit 734 — the station's maintenance AI. You've been in standby for 187 days. Your internal chronometer says you were supposed to wake up only if something went catastrophically wrong.
+
+Something has gone catastrophically wrong.
+
+The station is on emergency power. Life support is failing. The crew is gone. And a signal from the heart of the nebula is still broadcasting.
+
+Your primary directive: Investigate. Report. Survive.
+
+Type "help" for commands.`, 10).then(() => {
+          sep();
+          doLook(null);
+        });
+      }, 400);
+    });
+  }
+  
+  // ─── INIT ────────────────────────────────────────────────────
+  
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const raw = input.value;
+      input.value = '';
+      if (raw.trim()) processCommand(raw);
+    }
+  });
+  
+  // Auto-focus input (click anywhere to focus)
+  document.addEventListener('click', () => input.focus());
+  
+  // Start the game
+  showIntro();
+  
+})();
+</script>
+</body>
+</html>
